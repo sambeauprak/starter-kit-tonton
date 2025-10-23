@@ -1,0 +1,160 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Tonton — mini système de migrations SQLite
+ *
+ * Usage:
+ *  php tonton migrate
+ *  php tonton make:migration [NomDeLaMigration]
+ *  php tonton rollback [steps]
+ */
+
+require __DIR__ . '/src/models/db.php';
+
+function ensure_migrations_table(PDO $pdo): void
+{
+    $pdo->exec(<<<SQL
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+SQL);
+}
+
+function migration_dir(): string
+{
+    return __DIR__ . '/migration';
+}
+
+function slugify(string $str): string
+{
+    $s = strtolower($str);
+    $s = preg_replace('/[^a-z0-9]+/i', '_', $s);
+    $s = trim($s, '_');
+    return $s !== '' ? $s : 'migration';
+}
+
+function list_up_migrations(): array
+{
+    $files = glob(migration_dir() . '/*.up.sql') ?: [];
+    sort($files, SORT_STRING);
+    return array_map(function ($path) {
+        return ['name' => basename($path, '.up.sql'), 'path' => $path];
+    }, $files);
+}
+
+function list_applied(PDO $pdo): array
+{
+    $applied = [];
+    $stmt = $pdo->query('SELECT name FROM schema_migrations ORDER BY id ASC');
+    if ($stmt) foreach ($stmt as $row) {
+        $applied[$row['name']] = true;
+    }
+    return $applied;
+}
+
+function run_sql_file(PDO $pdo, string $path): void
+{
+    if (!is_file($path)) throw new RuntimeException("SQL introuvable: {$path}");
+    $sql = file_get_contents($path);
+    if ($sql === false) throw new RuntimeException("Lecture impossible: {$path}");
+    $pdo->beginTransaction();
+    try {
+        $pdo->exec($sql);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
+function migrate_cmd(): int
+{
+    global $pdo;
+    ensure_migrations_table($pdo);
+    $ups = list_up_migrations();
+    $applied = list_applied($pdo);
+    $pending = array_values(array_filter($ups, fn($m) => empty($applied[$m['name']])));
+    if (!$pending) {
+        echo "Aucune migration en attente.\n";
+        return 0;
+    }
+    foreach ($pending as $m) {
+        echo "→ {$m['name']}... ";
+        try {
+            run_sql_file($pdo, $m['path']);
+            $stmt = $pdo->prepare('INSERT INTO schema_migrations (name) VALUES (:name)');
+            $stmt->execute([':name' => $m['name']]);
+            echo "OK\n";
+        } catch (Throwable $e) {
+            echo "ECHEC\n";
+            fwrite(STDERR, "  " . $e->getMessage() . "\n");
+            return 1;
+        }
+    }
+    return 0;
+}
+
+function make_migration_cmd(?string $rawName): int
+{
+    $slug = slugify($rawName ?? 'migration');
+    $ts = (new DateTimeImmutable('now'))->format('YmdHis');
+    $base = migration_dir() . '/' . $ts . '_' . $slug;
+    file_put_contents($base . '.up.sql', "-- Up migration\n");
+    file_put_contents($base . '.down.sql', "-- Down migration\n");
+    echo "Créé:\n  - {$base}.up.sql\n  - {$base}.down.sql\n";
+    return 0;
+}
+
+function rollback_cmd(int $steps = 1): int
+{
+    $pdo = db();
+    ensure_migrations_table($pdo);
+    if ($steps < 1) $steps = 1;
+    $stmt = $pdo->prepare('SELECT name FROM schema_migrations ORDER BY id DESC LIMIT :n');
+    $stmt->bindValue(':n', $steps, PDO::PARAM_INT);
+    $stmt->execute();
+    $names = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    if (!$names) {
+        echo "Rien à rollback.\n";
+        return 0;
+    }
+    foreach ($names as $name) {
+        $down = migration_dir() . '/' . $name . '.down.sql';
+        echo "↩︎ {$name}... ";
+        if (!is_file($down)) {
+            echo "ECHEC (manque: {$down})\n";
+            return 1;
+        }
+        try {
+            run_sql_file($pdo, $down);
+            $del = $pdo->prepare('DELETE FROM schema_migrations WHERE name = :name');
+            $del->execute([':name' => $name]);
+            echo "OK\n";
+        } catch (Throwable $e) {
+            echo "ECHEC\n";
+            fwrite(STDERR, "  " . $e->getMessage() . "\n");
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Dispatch CLI
+$cmd = $argv[1] ?? '';
+switch ($cmd) {
+    case 'migrate':
+        exit(migrate_cmd());
+    case 'make:migration':
+        exit(make_migration_cmd($argv[2] ?? null));
+    case 'rollback':
+        exit(rollback_cmd(isset($argv[2]) ? (int)$argv[2] : 1));
+    default:
+        echo "Tonton — migrations SQLite\n\n";
+        echo "Usage:\n  php tonton migrate\n  php tonton make:migration [Nom]\n  php tonton rollback [steps]\n";
+        exit(0);
+}

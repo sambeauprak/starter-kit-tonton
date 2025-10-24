@@ -15,10 +15,11 @@ php -S localhost:8000 -t public
 
 Ouvrez front/index.html dans votre navigateur, ou servez-le avec un serveur statique.
 Par défaut, le front appelle :
-• http://localhost:8000/?route=notes.index
-• http://localhost:8000/?route=notes.create
-• http://localhost:8000/?route=notes.edit&id={ID}
-• http://localhost:8000/?route=notes.delete&id={ID}&delete=1
+
+- http://localhost:8000/?route=notes.index
+- http://localhost:8000/?route=notes.create
+- http://localhost:8000/?route=notes.edit&id={ID}
+- http://localhost:8000/?route=notes.delete&id={ID}&delete=1
 
 Si besoin, modifiez l’URL dans front/assets/script.js (API_BASE).
 

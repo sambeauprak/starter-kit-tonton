@@ -62,7 +62,7 @@ function createNote($pdo): void
     $content = s((string)($input['content'] ?? ''));
 
     if ($title === '' || $content === '') {
-        respond_error('title et content sont requis', 422);
+        respond_error('title et content sont requis', 422); // HTTP Code erreur
     }
 
     addNote($pdo, $title, $content);

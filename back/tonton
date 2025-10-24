@@ -112,7 +112,7 @@ function make_migration_cmd(?string $rawName): int
 
 function rollback_cmd(int $steps = 1): int
 {
-    $pdo = db();
+    global $pdo;
     ensure_migrations_table($pdo);
     if ($steps < 1) $steps = 1;
     $stmt = $pdo->prepare('SELECT name FROM schema_migrations ORDER BY id DESC LIMIT :n');

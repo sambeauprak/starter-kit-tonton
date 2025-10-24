@@ -1,9 +1,7 @@
 <?php
 
-// path database from root
+// Path database from root
 $root_dir = dirname(__DIR__);
-
-
 
 $sql_path = $root_dir . '/database.sqlite';
 try {

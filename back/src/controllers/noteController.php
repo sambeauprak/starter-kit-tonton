@@ -56,9 +56,10 @@ function createNote($pdo): void
         respond_error('Method Not Allowed', 405, ['allowed' => ['POST', 'OPTIONS']]);
     }
 
-    $in = parsed_body();
-    $title   = s((string)($in['title']   ?? ''));
-    $content = s((string)($in['content'] ?? ''));
+    $input = parsed_body();
+
+    $title   = s((string)($input['title']   ?? ''));
+    $content = s((string)($input['content'] ?? ''));
 
     if ($title === '' || $content === '') {
         respond_error('title et content sont requis', 422);
@@ -94,13 +95,11 @@ function editNote($pdo, $id): void
 function listNotes($pdo): void
 {
     $notes = getNotes($pdo);
-    // Ton contrôleur renvoyait un tableau brut. On garde le même format pour compatibilité.
     respond_json($notes);
 }
 
 function removeNote($pdo, $id): void
 {
-    // Compat: ton implémentation déclenchait la suppression si ?delete est présent
     $hasDeleteFlag = isset($_GET['delete']) || isset($_POST['delete']);
     if (!$hasDeleteFlag) {
         respond_error('paramètre delete manquant', 400);

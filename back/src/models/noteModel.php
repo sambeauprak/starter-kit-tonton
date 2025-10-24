@@ -8,7 +8,7 @@ function getNotes($pdo)
 function addNote($pdo, $title, $content)
 {
     $stmt = $pdo->prepare("INSERT INTO notes (title, content) VALUES (?, ?)");
-    $stmt->execute([htmlspecialchars($title), htmlspecialchars($content)]);
+    $stmt->execute([$title, $content]);
 }
 
 function deleteNote($pdo, $id)
@@ -20,5 +20,5 @@ function deleteNote($pdo, $id)
 function updateNote($pdo, $id, $title, $content)
 {
     $stmt = $pdo->prepare("UPDATE notes SET title = ?, content = ? WHERE id = ?");
-    $stmt->execute([htmlspecialchars($title), htmlspecialchars($content), $id]);
+    $stmt->execute([$title, $content, $id]);
 }

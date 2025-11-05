@@ -1,21 +1,20 @@
 <?php
+require_once __DIR__ . '/../../src/controllers/customersController.php';
 
-require_once __DIR__ . '/../../src/controllers/noteController.php';
 switch ($action) {
     case 'index':
-        listNotes($pdo);
+        customersIndex($pdo);
         break;
     case 'create':
-        createNote($pdo, $_POST['title'] ?? '', $_POST['content'] ?? '');
+        customersCreate($pdo);
         break;
     case 'edit':
-        if (isset($_GET['id'])) {
-            editNote($pdo, $_GET['id'], $_POST['title'] ?? '', $_POST['content'] ?? '');
-        }
+        customersEdit($pdo, $_GET['id'] ?? null);
         break;
     case 'delete':
-        if (isset($_GET['id'])) {
-            removeNote($pdo, $_GET['id']);
-        }
+        customersDelete($pdo, $_GET['id'] ?? null);
         break;
+    default:
+        http_response_code(404);
+        echo json_encode(['message' => 'Not Found']);
 }

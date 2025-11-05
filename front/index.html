@@ -4,65 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Notes — Front</title>
-    <link rel="stylesheet" href="assets/style.css" />
+    <link rel="stylesheet" href="src/style.css" />
   </head>
   <body data-theme="light">
-    <header class="container py-4 flex items-center justify-between">
-      <h1 class="text-2xl fw-700">Notes</h1>
-      <button id="themeToggle" class="toggle" aria-label="Basculer le thème">
-        <span class="toggle__label">Light</span>
-        <span class="toggle__track"><span class="toggle__thumb"></span></span>
-        <span class="toggle__label">Dark</span>
-      </button>
-    </header>
-
-    <main class="container grid gap-6">
-      <section class="card">
-        <h2 class="text-lg fw-600 mb-2">Ajouter une note</h2>
-        <form id="noteForm" class="form grid gap-3">
-          <div class="grid gap-2">
-            <label for="title" class="label">Titre</label>
-            <input
-              id="title"
-              name="title"
-              type="text"
-              class="input"
-              placeholder="Ex: Idée de projet"
-              required
-            />
-          </div>
-          <div class="grid gap-2">
-            <label for="content" class="label">Contenu</label>
-            <textarea
-              id="content"
-              name="content"
-              class="input"
-              rows="5"
-              placeholder="Ta note ici..."
-              required
-            ></textarea>
-          </div>
-          <button class="btn" type="submit">Ajouter</button>
-          <p id="formMsg" class="text-sm"></p>
-        </form>
-      </section>
-
-      <section class="card">
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg fw-600">Mes notes</h2>
-          <button id="refreshBtn" class="btn btn-ghost">Rafraîchir</button>
-        </div>
-        <ul id="list" class="list mt-3"></ul>
-      </section>
-    </main>
-
-    <footer class="container py-6 text-sm opacity-70">
-      <p>
-        Back: <code>php -S localhost:8000 -t public</code> (dans le dossier
-        <code>back</code>).
-      </p>
-    </footer>
-
-    <script src="assets/script.js" defer></script>
+    <main id="app" class="container grid gap-6"></main>
+    <script type="module" src="src/app.js" defer></script>
   </body>
 </html>

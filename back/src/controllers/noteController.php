@@ -5,8 +5,6 @@ declare(strict_types=1);
 require_once __DIR__ . '/../models/db.php';
 require_once __DIR__ . '/../models/noteModel.php';
 
-error_reporting(E_ALL);
-ini_set('display_errors', '1');
 
 /** CORS + JSON pour toutes les réponses */
 header('Access-Control-Allow-Origin: *');

@@ -147,6 +147,9 @@ function rollback_cmd(int $steps = 1): int
 // Dispatch CLI
 $cmd = $argv[1] ?? '';
 switch ($cmd) {
+    case 'serve':
+        exec("php -S localhost:8000 -t public");
+        exit(0);
     case 'migrate':
         exit(migrate_cmd());
     case 'make:migration':

@@ -1,31 +1,35 @@
-// src/pages/notes.js
-import { fetchNotes, createNote, editNote, deleteNote } from "../api/notes.js";
+import {
+  fetchOrders,
+  fetchOrder,
+  createOrder,
+  editOrderStatus,
+  replaceOrderItems,
+  deleteOrder,
+} from "../api/orders.js";
+import { fetchCustomers } from "../api/customers.js";
+import { fetchProducts } from "../api/products.js";
 import { toast } from "../components/toast.js";
 import { ensureListContainer } from "../components/list.js";
 import { openModal } from "../components/modal.js";
 import { createDataGrid } from "../components/datagrid.js";
 import { Columns } from "../components/columns.js";
 
-// Cache + grid
-const noteCache = new Map();
+const cache = new Map();
 let eventsBound = false;
 let gridApi = null;
 
-export default async function notesPage() {
-  // Construit l’entête (titre + bouton Rafraîchir) et la carte liste
+export default async function ordersPage() {
   ensureListContainer();
-
-  // Remplace <ul id="list"> par un host pour le DataGrid
   let host = document.getElementById("tableHost");
   const oldList = document.getElementById("list");
   if (!host) {
     host = document.createElement("div");
     host.id = "tableHost";
-    if (oldList) oldList.replaceWith(host);
-    else document.getElementById("app")?.append(host);
+    oldList
+      ? oldList.replaceWith(host)
+      : document.getElementById("app")?.append(host);
   }
 
-  // Bouton Ajouter à côté de Rafraîchir
   const refreshBtn = document.getElementById("refreshBtn");
   if (refreshBtn && !document.getElementById("openAddModalBtn")) {
     const addBtn = document.createElement("button");
@@ -36,83 +40,85 @@ export default async function notesPage() {
     refreshBtn.insertAdjacentElement("beforebegin", addBtn);
   }
 
-  // Charge les données
   await refresh();
 
-  // Colonnes type Shopify + colonne Actions
-  const cols = Columns.notes({ withActions: true }).map((c) => {
-    if (c.key !== "actions") return c;
-    return {
-      ...c,
+  const cols = [
+    ...Columns.orders(),
+    {
+      key: "actions",
+      header: "",
+      sortable: false,
+      width: "260px",
       cell: (row) => {
         const id = row.id;
-        const wrap = document.createElement("div");
-        wrap.style.display = "flex";
-        wrap.style.gap = ".25rem";
-        const edit = document.createElement("button");
-        edit.type = "button";
-        edit.className = "btn btn-ghost";
-        edit.textContent = "Éditer";
-        edit.dataset.action = "edit";
-        edit.dataset.id = String(id);
-        const del = document.createElement("button");
-        del.type = "button";
-        del.className = "btn btn-ghost";
-        del.textContent = "Supprimer";
+        const w = document.createElement("div");
+        w.style.display = "flex";
+        w.style.gap = ".25rem";
+        const stat = Object.assign(document.createElement("button"), {
+          type: "button",
+          className: "btn btn-ghost",
+          textContent: "Statut",
+        });
+        stat.dataset.action = "status";
+        stat.dataset.id = String(id);
+        const items = Object.assign(document.createElement("button"), {
+          type: "button",
+          className: "btn btn-ghost",
+          textContent: "Lignes",
+        });
+        items.dataset.action = "items";
+        items.dataset.id = String(id);
+        const del = Object.assign(document.createElement("button"), {
+          type: "button",
+          className: "btn btn-ghost",
+          textContent: "Supprimer",
+        });
         del.dataset.action = "delete";
         del.dataset.id = String(id);
-        wrap.append(edit, del);
-        return wrap;
+        w.append(stat, items, del);
+        return w;
       },
-    };
-  });
+    },
+  ];
 
-  // Instancie le DataGrid
   gridApi = createDataGrid(host, {
     columns: cols,
-    rows: [...noteCache.values()],
-    storageKey: "columns:notes",
+    rows: [...cache.values()],
+    storageKey: "columns:orders",
   });
 
-  // Délégation globale (refresh, add, actions ligne)
   if (!eventsBound) {
     eventsBound = true;
     document.addEventListener(
       "click",
       async (e) => {
-        // Rafraîchir
         if (e.target.closest("#refreshBtn")) {
-          try {
-            await refresh();
-          } catch {
-            toast("❌ Rafraîchissement impossible", true);
-          }
+          await safeRefresh();
           return;
         }
-        // Ajouter
         if (e.target.closest("#openAddModalBtn")) {
           await openAddModal();
           return;
         }
-        // Actions de ligne (limité au host du grid)
         const btn = e.target.closest("button[data-action]");
         if (!btn || !host.contains(btn)) return;
-
         const id = Number(btn.dataset.id);
         if (!Number.isFinite(id)) return;
 
-        if (btn.dataset.action === "edit") {
-          const note = noteCache.get(String(id));
-          if (note) await openEditModal(note);
+        if (btn.dataset.action === "status") {
+          const row = cache.get(String(id));
+          if (row) await openStatusModal(row);
+        } else if (btn.dataset.action === "items") {
+          await openItemsModal(id);
         } else if (btn.dataset.action === "delete") {
-          const ok = await openDeleteModal(id);
+          const ok = await confirmDelete(cache.get(String(id)));
           if (ok) {
             try {
-              await deleteNote(id);
+              await deleteOrder(id);
               await refresh();
               toast("🗑️ Supprimé");
-            } catch (err) {
-              toast("❌ " + (err?.message || "Erreur suppression"), true);
+            } catch (e) {
+              toast("❌ " + (e?.message || "Erreur suppression"), true);
             }
           }
         }
@@ -122,30 +128,39 @@ export default async function notesPage() {
   }
 }
 
-// --- data ---
-
-async function refresh() {
-  const items = await fetchNotes();
-  noteCache.clear();
-  for (const n of items) if (n && n.id != null) noteCache.set(String(n.id), n);
-  if (gridApi) gridApi.update([...noteCache.values()]);
+async function safeRefresh() {
+  try {
+    await refresh();
+  } catch {
+    toast("❌ Rafraîchissement impossible", true);
+  }
 }
 
-// --- modals ---
+async function refresh() {
+  const { data } = await fetchOrders({
+    page: 1,
+    per_page: 1000,
+    sort: "created_at",
+    dir: "desc",
+  });
+  cache.clear();
+  for (const r of data) if (r && r.id != null) cache.set(String(r.id), r);
+  if (gridApi) gridApi.update([...cache.values()]);
+}
 
 async function openAddModal() {
-  const form = buildForm();
+  const form = await buildOrderForm();
   await openModal({
-    title: "Ajouter une note",
-    content: form,
+    title: "Créer une commande",
+    content: form.el,
     confirmText: "Enregistrer",
     onConfirm: async () => {
-      const payload = readForm(form);
-      if (!payload.title || !payload.content) return false; // ne ferme pas
+      const payload = form.read();
+      if (!payload.customer_id || !payload.items.length) return false;
       try {
-        await createNote(payload);
+        await createOrder(payload);
         await refresh();
-        toast("✅ Ajouté");
+        toast("✅ Ajoutée");
       } catch (e) {
         toast("❌ " + (e?.message || "Erreur ajout"), true);
         throw e;
@@ -154,36 +169,67 @@ async function openAddModal() {
   });
 }
 
-async function openEditModal(note) {
-  const form = buildForm(note);
+async function openStatusModal(row) {
+  const el = document.createElement("form");
+  el.className = "grid gap-2 form";
+  el.innerHTML = `
+    <label class="label" for="m-status">Statut</label>
+    <select id="m-status" class="input">
+      ${["pending", "paid", "refunded", "cancelled"]
+        .map(
+          (s) =>
+            `<option ${
+              row.status === s ? "selected" : ""
+            } value="${s}">${s}</option>`
+        )
+        .join("")}
+    </select>`;
+  el.addEventListener("submit", (e) => e.preventDefault());
   await openModal({
-    title: "Modifier la note",
-    content: form,
+    title: `Statut commande #${row.id}`,
+    content: el,
     confirmText: "Enregistrer",
     onConfirm: async () => {
-      const payload = readForm(form);
-      if (!payload.title || !payload.content) return false;
+      const status = el.querySelector("#m-status").value;
       try {
-        await editNote(note.id, payload);
+        await editOrderStatus(row.id, status);
         await refresh();
-        toast("✅ Modifié");
+        toast("✅ Statut mis à jour");
       } catch (e) {
-        toast("❌ " + (e?.message || "Erreur édition"), true);
+        toast("❌ " + (e?.message || "Erreur statut"), true);
         throw e;
       }
     },
   });
 }
 
-function openDeleteModal(noteId) {
-  const note = noteCache.get(String(noteId));
+async function openItemsModal(orderId) {
+  const order = await fetchOrder(orderId);
+  const form = await buildItemsForm(order.items || []);
+  await openModal({
+    title: `Lignes commande #${orderId}`,
+    content: form.el,
+    confirmText: "Enregistrer",
+    onConfirm: async () => {
+      const items = form.read();
+      if (!items.length) return false;
+      try {
+        await replaceOrderItems(orderId, items);
+        await refresh();
+        toast("✅ Lignes mises à jour");
+      } catch (e) {
+        toast("❌ " + (e?.message || "Erreur lignes"), true);
+        throw e;
+      }
+    },
+  });
+}
+
+function confirmDelete(row) {
   const box = document.createElement("div");
-  box.innerHTML = `
-    <p>Supprimer cette note&nbsp;?</p>
-    <p class="muted">${
-      note ? `<strong>${escapeHtml(note.title || "(Sans titre)")}</strong>` : ""
-    }</p>
-  `;
+  box.innerHTML = `<p>Supprimer cette commande&nbsp;?</p><p class="muted">#${
+    row?.id ?? ""
+  } — ${row?.name ?? ""}</p>`;
   return openModal({
     title: "Confirmation",
     content: box,
@@ -192,41 +238,208 @@ function openDeleteModal(noteId) {
   });
 }
 
-// --- form utils ---
+/* --- Forms --- */
 
-function buildForm(note = {}) {
-  const wrap = document.createElement("form");
-  wrap.className = "grid gap-2 form";
-  wrap.innerHTML = `
-    <label class="label" for="m-title">Titre</label>
-    <input id="m-title" class="input" required value="${escapeAttr(
-      note.title || ""
-    )}">
-    <label class="label" for="m-content">Contenu</label>
-    <textarea id="m-content" class="input" rows="4" required>${escapeHtml(
-      note.content || ""
-    )}</textarea>
-    <div class="text-sm" id="formMsg"></div>
-  `;
-  wrap.addEventListener("submit", (e) => e.preventDefault());
-  return wrap;
+async function buildOrderForm() {
+  const customers = (await fetchCustomers({ page: 1, per_page: 1000 })).data;
+  const products = (await fetchProducts({ page: 1, per_page: 1000 })).data;
+
+  const el = document.createElement("form");
+  el.className = "grid gap-2 form";
+  el.innerHTML = `
+    <label class="label" for="m-cust">Client</label>
+    <select id="m-cust" class="input" required></select>
+
+    <label class="label" for="m-status">Statut</label>
+    <select id="m-status" class="input">
+      <option value="pending">pending</option>
+      <option value="paid">paid</option>
+      <option value="refunded">refunded</option>
+      <option value="cancelled">cancelled</option>
+    </select>
+
+    <div id="itemsWrap" class="card">
+      <div class="flex items-center justify-between mb-2">
+        <span class="label">Lignes</span>
+        <button type="button" class="btn btn-ghost" id="addItemBtn">+ Ajouter</button>
+      </div>
+      <div id="items"></div>
+    </div>
+    <div class="text-sm" id="formMsg"></div>`;
+  el.addEventListener("submit", (e) => e.preventDefault());
+
+  // customers options
+  const selCust = el.querySelector("#m-cust");
+  for (const c of customers) {
+    const o = document.createElement("option");
+    o.value = String(c.id);
+    o.textContent = `${c.name} <${c.email}>`;
+    selCust.append(o);
+  }
+
+  // items builder
+  const list = el.querySelector("#items");
+  const addBtn = el.querySelector("#addItemBtn");
+  addBtn.addEventListener("click", () => addItemRow());
+
+  function addItemRow(init = {}) {
+    const row = document.createElement("div");
+    row.className = "grid gap-2";
+    row.style.gridTemplateColumns = "2fr 1fr 1fr auto";
+    row.style.alignItems = "center";
+    const sel = document.createElement("select");
+    sel.className = "input";
+    for (const p of products) {
+      const o = document.createElement("option");
+      o.value = String(p.id);
+      o.textContent = `${p.title} (${p.sku})`;
+      if (p.id === init.product_id) o.selected = true;
+      sel.append(o);
+    }
+    const qty = document.createElement("input");
+    qty.type = "number";
+    qty.min = "1";
+    qty.required = true;
+    qty.className = "input";
+    qty.value = String(init.quantity ?? 1);
+    const price = document.createElement("input");
+    price.type = "number";
+    price.min = "0";
+    price.required = true;
+    price.className = "input";
+    price.value = String(
+      init.unit_price_cents ??
+        (() => {
+          const p = products.find((pp) => pp.id === Number(sel.value));
+          return p?.price_cents ?? 0;
+        })()
+    );
+    sel.addEventListener("change", () => {
+      const p = products.find((pp) => pp.id === Number(sel.value));
+      if (p) price.value = String(p.price_cents);
+    });
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "btn btn-ghost";
+    rm.textContent = "Retirer";
+    rm.addEventListener("click", () => row.remove());
+    row.append(sel, qty, price, rm);
+    list.append(row);
+  }
+
+  // une ligne par défaut
+  addItemRow();
+
+  const read = () => {
+    const items = [];
+    for (const row of list.children) {
+      const [sel, qty, price] = row.querySelectorAll("select,input");
+      const product_id = Number(sel.value);
+      const quantity = Number(qty.value);
+      const unit_price_cents = Number(price.value);
+      if (
+        Number.isFinite(product_id) &&
+        Number.isFinite(quantity) &&
+        quantity > 0 &&
+        Number.isFinite(unit_price_cents) &&
+        unit_price_cents >= 0
+      ) {
+        items.push({ product_id, quantity, unit_price_cents });
+      }
+    }
+    return {
+      customer_id: Number(el.querySelector("#m-cust").value),
+      status: el.querySelector("#m-status").value,
+      items,
+    };
+  };
+  return { el, read };
 }
 
-function readForm(form) {
-  const title = form.querySelector("#m-title")?.value.trim() || "";
-  const content = form.querySelector("#m-content")?.value.trim() || "";
-  return { title, content };
-}
+async function buildItemsForm(existing = []) {
+  const products = (await fetchProducts({ page: 1, per_page: 1000 })).data;
+  const el = document.createElement("form");
+  el.className = "grid gap-2 form";
+  el.innerHTML = `
+    <div id="itemsWrap" class="card">
+      <div class="flex items-center justify-between mb-2">
+        <span class="label">Lignes</span>
+        <button type="button" class="btn btn-ghost" id="addItemBtn">+ Ajouter</button>
+      </div>
+      <div id="items"></div>
+    </div>`;
+  el.addEventListener("submit", (e) => e.preventDefault());
 
-function escapeHtml(s) {
-  return String(s).replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[
-        c
-      ])
-  );
-}
-function escapeAttr(s) {
-  return escapeHtml(s).replace(/"/g, "&quot;");
+  const list = el.querySelector("#items");
+  const addBtn = el.querySelector("#addItemBtn");
+  addBtn.addEventListener("click", () => addItemRow());
+
+  function addItemRow(init = {}) {
+    const row = document.createElement("div");
+    row.className = "grid gap-2";
+    row.style.gridTemplateColumns = "2fr 1fr 1fr auto";
+    row.style.alignItems = "center";
+    const sel = document.createElement("select");
+    sel.className = "input";
+    for (const p of products) {
+      const o = document.createElement("option");
+      o.value = String(p.id);
+      o.textContent = `${p.title} (${p.sku})`;
+      if (p.id === init.product_id) o.selected = true;
+      sel.append(o);
+    }
+    const qty = document.createElement("input");
+    qty.type = "number";
+    qty.min = "1";
+    qty.required = true;
+    qty.className = "input";
+    qty.value = String(init.quantity ?? 1);
+    const price = document.createElement("input");
+    price.type = "number";
+    price.min = "0";
+    price.required = true;
+    price.className = "input";
+    price.value = String(
+      init.unit_price_cents ??
+        (() => {
+          const p = products.find((pp) => pp.id === Number(sel.value));
+          return p?.price_cents ?? 0;
+        })()
+    );
+    sel.addEventListener("change", () => {
+      const p = products.find((pp) => pp.id === Number(sel.value));
+      if (p) price.value = String(p.price_cents);
+    });
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "btn btn-ghost";
+    rm.textContent = "Retirer";
+    rm.addEventListener("click", () => row.remove());
+    row.append(sel, qty, price, rm);
+    list.append(row);
+  }
+
+  existing.forEach(addItemRow);
+  if (!existing.length) addItemRow();
+
+  const read = () => {
+    const items = [];
+    for (const row of list.children) {
+      const [sel, qty, price] = row.querySelectorAll("select,input");
+      const product_id = Number(sel.value);
+      const quantity = Number(qty.value);
+      const unit_price_cents = Number(price.value);
+      if (
+        Number.isFinite(product_id) &&
+        Number.isFinite(quantity) &&
+        quantity > 0 &&
+        Number.isFinite(unit_price_cents) &&
+        unit_price_cents >= 0
+      ) {
+        items.push({ product_id, quantity, unit_price_cents });
+      }
+    }
+    return items;
+  };
+  return { el, read };
 }

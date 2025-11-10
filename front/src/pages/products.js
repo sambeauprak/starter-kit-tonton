@@ -1,31 +1,32 @@
-// src/pages/notes.js
-import { fetchNotes, createNote, editNote, deleteNote } from "../api/notes.js";
+import {
+  fetchProducts,
+  createProduct,
+  editProduct,
+  deleteProduct,
+} from "../api/products.js";
+import { fetchCategories } from "../api/categories.js";
 import { toast } from "../components/toast.js";
 import { ensureListContainer } from "../components/list.js";
 import { openModal } from "../components/modal.js";
 import { createDataGrid } from "../components/datagrid.js";
 import { Columns } from "../components/columns.js";
 
-// Cache + grid
-const noteCache = new Map();
+const cache = new Map();
 let eventsBound = false;
 let gridApi = null;
 
-export default async function notesPage() {
-  // Construit l’entête (titre + bouton Rafraîchir) et la carte liste
+export default async function productsPage() {
   ensureListContainer();
-
-  // Remplace <ul id="list"> par un host pour le DataGrid
   let host = document.getElementById("tableHost");
   const oldList = document.getElementById("list");
   if (!host) {
     host = document.createElement("div");
     host.id = "tableHost";
-    if (oldList) oldList.replaceWith(host);
-    else document.getElementById("app")?.append(host);
+    oldList
+      ? oldList.replaceWith(host)
+      : document.getElementById("app")?.append(host);
   }
 
-  // Bouton Ajouter à côté de Rafraîchir
   const refreshBtn = document.getElementById("refreshBtn");
   if (refreshBtn && !document.getElementById("openAddModalBtn")) {
     const addBtn = document.createElement("button");
@@ -36,79 +37,72 @@ export default async function notesPage() {
     refreshBtn.insertAdjacentElement("beforebegin", addBtn);
   }
 
-  // Charge les données
   await refresh();
 
-  // Colonnes type Shopify + colonne Actions
-  const cols = Columns.notes({ withActions: true }).map((c) => {
-    if (c.key !== "actions") return c;
-    return {
-      ...c,
+  const cols = [
+    ...Columns.products(),
+    {
+      key: "actions",
+      header: "",
+      width: "160px",
+      sortable: false,
       cell: (row) => {
         const id = row.id;
-        const wrap = document.createElement("div");
-        wrap.style.display = "flex";
-        wrap.style.gap = ".25rem";
-        const edit = document.createElement("button");
-        edit.type = "button";
-        edit.className = "btn btn-ghost";
-        edit.textContent = "Éditer";
+        const w = document.createElement("div");
+        w.style.display = "flex";
+        w.style.gap = ".25rem";
+        const edit = Object.assign(document.createElement("button"), {
+          type: "button",
+          className: "btn btn-ghost",
+          textContent: "Éditer",
+        });
         edit.dataset.action = "edit";
         edit.dataset.id = String(id);
-        const del = document.createElement("button");
-        del.type = "button";
-        del.className = "btn btn-ghost";
-        del.textContent = "Supprimer";
+        const del = Object.assign(document.createElement("button"), {
+          type: "button",
+          className: "btn btn-ghost",
+          textContent: "Supprimer",
+        });
         del.dataset.action = "delete";
         del.dataset.id = String(id);
-        wrap.append(edit, del);
-        return wrap;
+        w.append(edit, del);
+        return w;
       },
-    };
-  });
+    },
+  ];
 
-  // Instancie le DataGrid
   gridApi = createDataGrid(host, {
     columns: cols,
-    rows: [...noteCache.values()],
-    storageKey: "columns:notes",
+    rows: [...cache.values()],
+    storageKey: "columns:products",
   });
 
-  // Délégation globale (refresh, add, actions ligne)
   if (!eventsBound) {
     eventsBound = true;
     document.addEventListener(
       "click",
       async (e) => {
-        // Rafraîchir
         if (e.target.closest("#refreshBtn")) {
-          try {
-            await refresh();
-          } catch {
-            toast("❌ Rafraîchissement impossible", true);
-          }
+          await safeRefresh();
           return;
         }
-        // Ajouter
         if (e.target.closest("#openAddModalBtn")) {
           await openAddModal();
           return;
         }
-        // Actions de ligne (limité au host du grid)
         const btn = e.target.closest("button[data-action]");
         if (!btn || !host.contains(btn)) return;
-
         const id = Number(btn.dataset.id);
         if (!Number.isFinite(id)) return;
 
         if (btn.dataset.action === "edit") {
-          const note = noteCache.get(String(id));
-          if (note) await openEditModal(note);
+          const row = cache.get(String(id));
+          if (row) await openEditModal(row);
         } else if (btn.dataset.action === "delete") {
-          const ok = await openDeleteModal(id);
+          const ok = await confirmDelete(cache.get(String(id)));
           if (ok) {
             try {
-              await deleteNote(id);
+              await deleteProduct(id);
               await refresh();
               toast("🗑️ Supprimé");
             } catch (err) {
@@ -122,28 +116,32 @@ export default async function notesPage() {
   }
 }
 
-// --- data ---
-
-async function refresh() {
-  const items = await fetchNotes();
-  noteCache.clear();
-  for (const n of items) if (n && n.id != null) noteCache.set(String(n.id), n);
-  if (gridApi) gridApi.update([...noteCache.values()]);
+async function safeRefresh() {
+  try {
+    await refresh();
+  } catch {
+    toast("❌ Rafraîchissement impossible", true);
+  }
 }
 
-// --- modals ---
+async function refresh() {
+  const { data } = await fetchProducts({ page: 1, per_page: 1000 });
+  cache.clear();
+  for (const r of data) if (r && r.id != null) cache.set(String(r.id), r);
+  if (gridApi) gridApi.update([...cache.values()]);
+}
 
 async function openAddModal() {
-  const form = buildForm();
+  const form = await buildForm();
   await openModal({
-    title: "Ajouter une note",
-    content: form,
+    title: "Ajouter un produit",
+    content: form.el,
     confirmText: "Enregistrer",
     onConfirm: async () => {
-      const payload = readForm(form);
-      if (!payload.title || !payload.content) return false; // ne ferme pas
+      const p = form.read();
+      if (!p.sku || !p.title || !(p.price_cents >= 0)) return false;
       try {
-        await createNote(payload);
+        await createProduct(p);
         await refresh();
         toast("✅ Ajouté");
       } catch (e) {
@@ -154,17 +152,17 @@ async function openAddModal() {
   });
 }
 
-async function openEditModal(note) {
-  const form = buildForm(note);
+async function openEditModal(row) {
+  const form = await buildForm(row);
   await openModal({
-    title: "Modifier la note",
-    content: form,
+    title: "Modifier le produit",
+    content: form.el,
     confirmText: "Enregistrer",
     onConfirm: async () => {
-      const payload = readForm(form);
-      if (!payload.title || !payload.content) return false;
+      const p = form.read();
+      if (!p.sku || !p.title || !(p.price_cents >= 0)) return false;
       try {
-        await editNote(note.id, payload);
+        await editProduct(row.id, p);
         await refresh();
         toast("✅ Modifié");
       } catch (e) {
@@ -175,15 +173,11 @@ async function openEditModal(note) {
   });
 }
 
-function openDeleteModal(noteId) {
-  const note = noteCache.get(String(noteId));
+function confirmDelete(row) {
   const box = document.createElement("div");
-  box.innerHTML = `
-    <p>Supprimer cette note&nbsp;?</p>
-    <p class="muted">${
-      note ? `<strong>${escapeHtml(note.title || "(Sans titre)")}</strong>` : ""
-    }</p>
-  `;
+  box.innerHTML = `<p>Supprimer ce produit&nbsp;?</p><p class="muted"><strong>${esc(
+    row?.title || ""
+  )}</strong></p>`;
   return openModal({
     title: "Confirmation",
     content: box,
@@ -192,33 +186,54 @@ function openDeleteModal(noteId) {
   });
 }
 
-// --- form utils ---
-
-function buildForm(note = {}) {
-  const wrap = document.createElement("form");
-  wrap.className = "grid gap-2 form";
-  wrap.innerHTML = `
+async function buildForm(row = {}) {
+  const categories =
+    (await fetchCategories()).data || (await fetchCategories()).data; // garde simple
+  const el = document.createElement("form");
+  el.className = "grid gap-2 form";
+  el.innerHTML = `
+    <label class="label" for="m-sku">SKU</label>
+    <input id="m-sku" class="input" required value="${escAttr(row.sku || "")}">
     <label class="label" for="m-title">Titre</label>
-    <input id="m-title" class="input" required value="${escapeAttr(
-      note.title || ""
+    <input id="m-title" class="input" required value="${escAttr(
+      row.title || ""
     )}">
-    <label class="label" for="m-content">Contenu</label>
-    <textarea id="m-content" class="input" rows="4" required>${escapeHtml(
-      note.content || ""
-    )}</textarea>
-    <div class="text-sm" id="formMsg"></div>
-  `;
-  wrap.addEventListener("submit", (e) => e.preventDefault());
-  return wrap;
+    <label class="label" for="m-price">Prix (cents)</label>
+    <input id="m-price" class="input" type="number" min="0" required value="${
+      Number.isFinite(row.price_cents) ? row.price_cents : 0
+    }">
+    <label class="label" for="m-stock">Stock</label>
+    <input id="m-stock" class="input" type="number" min="0" required value="${
+      Number.isFinite(row.stock) ? row.stock : 0
+    }">
+    <label class="label" for="m-cats">Catégories</label>
+    <select id="m-cats" class="input" multiple size="5"></select>
+    <div class="text-sm" id="formMsg"></div>`;
+  el.addEventListener("submit", (e) => e.preventDefault());
+  const sel = el.querySelector("#m-cats");
+  const selectedIds = new Set(
+    row.category_ids || row.categories?.map((c) => c.id) || []
+  );
+  for (const c of categories?.data || categories || []) {
+    const opt = document.createElement("option");
+    opt.value = String(c.id);
+    opt.textContent = c.name;
+    if (selectedIds.has(c.id)) opt.selected = true;
+    sel.append(opt);
+  }
+  const read = () => ({
+    sku: el.querySelector("#m-sku").value.trim(),
+    title: el.querySelector("#m-title").value.trim(),
+    price_cents: Number(el.querySelector("#m-price").value),
+    stock: Number(el.querySelector("#m-stock").value),
+    category_ids: [...el.querySelector("#m-cats").selectedOptions].map((o) =>
+      Number(o.value)
+    ),
+  });
+  return { el, read };
 }
 
-function readForm(form) {
-  const title = form.querySelector("#m-title")?.value.trim() || "";
-  const content = form.querySelector("#m-content")?.value.trim() || "";
-  return { title, content };
-}
-
-function escapeHtml(s) {
+function esc(s) {
   return String(s).replace(
     /[&<>"']/g,
     (c) =>
@@ -227,6 +242,6 @@ function escapeHtml(s) {
       ])
   );
 }
-function escapeAttr(s) {
-  return escapeHtml(s).replace(/"/g, "&quot;");
+function escAttr(s) {
+  return esc(s).replace(/"/g, "&quot;");
 }

@@ -35,7 +35,7 @@ function getCustomers(PDO $pdo, array $opts = []): array
     $stmt->execute($params);
     $total = (int)$stmt->fetchColumn();
 
-    $stmt = $pdo->prepare("SELECT * $sqlBase ORDER BY $sort $dir LIMIT :lim OFFSET :off");
+    $stmt = $pdo->prepare("SELECT * $sqlBase  LIMIT :lim OFFSET :off");
     foreach ($params as $k => $v) $stmt->bindValue($k, $v);
     $stmt->bindValue(':lim', $per, PDO::PARAM_INT);
     $stmt->bindValue(':off', $offset, PDO::PARAM_INT);
